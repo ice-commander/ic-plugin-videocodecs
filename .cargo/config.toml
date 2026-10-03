@@ -1,0 +1,3 @@
+# Keep build output under bin/, which git ignores.
+[build]
+target-dir = "bin/target"

@@ -1,0 +1,7 @@
+/target
+/bin/*
+!/bin/.gitkeep
+/distr
+/release-notes.md
+/3rdparty/out
+/3rdparty/cache

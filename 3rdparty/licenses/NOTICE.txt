@@ -1,0 +1,23 @@
+The video-codecs folder holds libmpv, which this plugin carries but did not write: one library, LGPL and
+decode-only — FFmpeg without --enable-gpl and --enable-version3, mpv with -Dgpl=false — with the projects below
+built from unmodified source and linked into it statically. The recipes are in the plugin's repository, 3rdparty/:
+libmpv-macos.sh (macOS), libmpv-linux/ (Linux), build.sh (all three, and the Windows build).
+
+  mpv 0.41.0        LGPL-2.1-or-later   https://github.com/mpv-player/mpv
+  FFmpeg 8.1.2      LGPL-2.1-or-later   https://ffmpeg.org/releases/ffmpeg-8.1.2.tar.xz
+  libplacebo 7.360  LGPL-2.1-or-later   https://code.videolan.org/videolan/libplacebo
+  dav1d 1.5.4       BSD-2-Clause        https://code.videolan.org/videolan/dav1d
+  libass 0.17.5     ISC                 https://github.com/libass/libass
+  Little CMS 2.19   MIT                 https://github.com/mm2/Little-CMS
+  macOS only, Linux takes the system's:
+  FreeType 2.14.3   FTL                 https://gitlab.freedesktop.org/freetype/freetype
+  HarfBuzz 14.6.0   MIT                 https://github.com/harfbuzz/harfbuzz
+  FriBidi 1.0.17    LGPL-2.1-or-later   https://github.com/fribidi/fribidi
+
+Under the LGPL you may replace libmpv with your own build of the same interface: put it in this folder under the
+same name. The source of every version shipped is at the address above. The Windows libmpv-2.dll is the LGPL build
+of https://github.com/zhongfly/mpv-winbuild, with its components linked in the same way, listed there.
+
+Portions of this software are copyright (c) The FreeType Project (www.freetype.org). All rights reserved.
+
+What follows: the files carried for this system, then the licence texts.

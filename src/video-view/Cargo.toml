@@ -1,0 +1,22 @@
+[package]
+name = "ic-video-view"
+version = "0.0.0"
+edition = "2021"
+description = "Plays video"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+ic-plugin-api = { workspace = true }
+serde_json = { workspace = true }
+
+# Only while the tests run: the stand-in host is not shipped in the plugin.
+[dev-dependencies]
+ic-plugin-api = { workspace = true, features = ["testing"] }
+
+[features]
+default = ["export-abi"]
+export-abi = []

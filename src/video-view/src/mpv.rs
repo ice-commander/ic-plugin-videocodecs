@@ -198,9 +198,14 @@ impl Player {
             refused: Vec::new(),
             ticket: Box::into_raw(Box::new(instance)),
         };
-        for (name, value) in OPTIONS {
+        for (name, value) in OPTIONS.iter().chain(PLATFORM_OPTIONS) {
             if !player.option(name, value) {
                 player.refused.push((*name).to_string());
+            }
+        }
+        for (name, value) in places() {
+            if !player.option(name, &value) {
+                player.refused.push(name.to_string());
             }
         }
         if (api.initialize)(handle) < 0 {
@@ -357,6 +362,41 @@ const OPTIONS: &[(&str, &str)] = &[
     ("keep-open", "yes"),
     ("volume", "80"),
 ];
+
+/// What a phone needs on top: the GTK thread that draws is the phone's UI thread, and there is no
+/// JavaVM handed to libavcodec, so nothing may ask for one.
+#[cfg(target_os = "android")]
+const PLATFORM_OPTIONS: &[(&str, &str)] = &[
+    // AAudio is opened with dlopen; AudioTrack would need JNI.
+    ("ao", "aaudio"),
+    // MediaCodec through the NDK, frames copied back; software when it cannot.
+    ("hwdec", "mediacodec-copy"),
+    // The zero-copy interop wants JNI and would be probed, and fail, on the GTK thread.
+    ("gpu-hwdec-interop", "no"),
+    ("profile", "fast"),
+    // Rendering would otherwise wait for each frame's time on the UI thread.
+    ("video-timing-offset", "0"),
+    ("demuxer-max-bytes", "64MiB"),
+    ("demuxer-max-back-bytes", "64MiB"),
+];
+#[cfg(not(target_os = "android"))]
+const PLATFORM_OPTIONS: &[(&str, &str)] = &[];
+
+/// Where mpv keeps what it writes: on a phone HOME is the shared storage, so the app's cache instead.
+#[cfg(target_os = "android")]
+fn places() -> Vec<(&'static str, String)> {
+    let Some(cache) = std::env::var_os("TMPDIR").map(std::path::PathBuf::from) else {
+        return Vec::new();
+    };
+    vec![(
+        "gpu-shader-cache-dir",
+        cache.join("mpv").to_string_lossy().into_owned(),
+    )]
+}
+#[cfg(not(target_os = "android"))]
+fn places() -> Vec<(&'static str, String)> {
+    Vec::new()
+}
 
 /// Must match `volume` in OPTIONS.
 pub const STARTING_VOLUME: f64 = 80.0;

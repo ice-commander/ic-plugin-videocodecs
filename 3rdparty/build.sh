@@ -3,11 +3,12 @@
 # into 3rdparty/out/<system>/video-codecs, with THIRD-PARTY-<system>.txt. Run by hand, only when a version changes:
 # build-release.sh takes out/ as it is, so the files keep their md5 and the updater does not fetch them again.
 #
-#   bash 3rdparty/build.sh [macos] [linux] [windows]     none named: all three
+#   bash 3rdparty/build.sh [macos] [linux] [windows] [android]     none named: the three desktops
 #
 #   macos    built here (libmpv-macos.sh), every dependency inside; bundle-macos.py names and signs it
 #   linux    built in Docker on Debian 12 (libmpv-linux/), whose glibc is older than any supported distribution's
 #   windows  the prebuilt LGPL libmpv-2.dll of zhongfly/mpv-winbuild: IC_LIBMPV_DLL, or cache/libmpv-windows/libmpv-2.dll
+#   android  arm64, built here with the NDK (libmpv-android.sh); the font stack is the one the app's APK ships
 #
 # Sources and builds are kept in 3rdparty/cache and reused; REBUILD=1 compiles again.
 set -e
@@ -60,6 +61,14 @@ for platform in $platforms; do
                 cat "$licence" >> "$NOTES.texts"
             done
             ;;
+        android)
+            PREFIX="$CACHE/libmpv-android"
+            if [ -n "$REBUILD" ] || [ ! -f "$PREFIX/lib/libmpv.so" ]; then
+                bash libmpv-android.sh "$PREFIX"
+            fi
+            cp "$PREFIX/lib/libmpv.so" "$OUT/libmpv.so"
+            printf '  %-32s built by libmpv-android.sh\n' libmpv.so >> "$NOTES"
+            ;;
         windows)
             DLL="${IC_LIBMPV_DLL:-$CACHE/libmpv-windows/libmpv-2.dll}"
             if [ ! -f "$DLL" ]; then
@@ -71,7 +80,7 @@ for platform in $platforms; do
                 libmpv-2.dll >> "$NOTES"
             ;;
         *)
-            echo "unknown system $platform: macos, linux or windows" >&2
+            echo "unknown system $platform: macos, linux, windows or android" >&2
             exit 1
             ;;
     esac
@@ -81,8 +90,8 @@ for platform in $platforms; do
         echo
         cat "$NOTES"
         texts="LGPL-2.1.txt FFmpeg.md mpv.txt dav1d.txt libass.txt lcms2.txt"
-        # FreeType and HarfBuzz are inside libmpv on macOS and Windows; Linux takes the system's.
-        [ "$platform" = linux ] || texts="$texts FreeType-FTL.txt HarfBuzz.txt"
+        # FreeType and HarfBuzz are inside libmpv on macOS and Windows; Linux takes the system's, Android the APK's.
+        case "$platform" in linux|android) ;; *) texts="$texts FreeType-FTL.txt HarfBuzz.txt" ;; esac
         for text in $texts; do
             printf '\n\n===== %s =====\n\n' "$text"
             cat "licenses/$text"

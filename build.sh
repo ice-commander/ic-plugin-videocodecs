@@ -15,10 +15,10 @@ if [ -z "$IC_VIDEO_CODECS" ]; then
         MINGW*|MSYS*|CYGWIN*) PLATFORM=windows ;;
         *) PLATFORM=linux ;;
     esac
-    if [ -d "3rdparty/out/$PLATFORM/video-codecs" ]; then
-        IC_VIDEO_CODECS="$PWD/3rdparty/out/$PLATFORM/video-codecs"
+    if [ -d "3rdparty/out/$PLATFORM/codecs" ]; then
+        IC_VIDEO_CODECS="$PWD/3rdparty/out/$PLATFORM/codecs"
     else
-        echo "  no 3rdparty/out/$PLATFORM/video-codecs — bash 3rdparty/build.sh $PLATFORM makes it."
+        echo "  no 3rdparty/out/$PLATFORM/codecs — bash 3rdparty/build.sh $PLATFORM makes it."
         echo "  Without it the plugin loads only where libmpv is already installed."
     fi
 fi
@@ -43,20 +43,20 @@ if [ "$found" -eq 0 ]; then
     exit 1
 fi
 
-rm -rf bin/video-codecs
+rm -rf bin/codecs
 if [ -n "$IC_VIDEO_CODECS" ]; then
     if [ ! -d "$IC_VIDEO_CODECS" ]; then
         echo "IC_VIDEO_CODECS is not a folder: $IC_VIDEO_CODECS" >&2
         exit 1
     fi
-    mkdir -p bin/video-codecs
-    cp -a "$IC_VIDEO_CODECS"/. bin/video-codecs/
-    carried=$(find bin/video-codecs -type f | wc -l)
+    mkdir -p bin/codecs
+    cp -a "$IC_VIDEO_CODECS"/. bin/codecs/
+    carried=$(find bin/codecs -type f | wc -l)
     if [ "$carried" -eq 0 ]; then
         echo "nothing to carry from $IC_VIDEO_CODECS" >&2
         exit 1
     fi
-    printf '%s\n' "  $carried media libraries in bin/video-codecs"
+    printf '%s\n' "  $carried media libraries in bin/codecs"
 else
     echo "  no IC_VIDEO_CODECS: the plugin will need a libmpv on the machine"
 fi

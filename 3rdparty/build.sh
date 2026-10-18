@@ -1,6 +1,6 @@
 #!/bin/bash
 # Builds what this plugin carries but did not write — libmpv, one LGPL, decode-only library with its dependencies inside —
-# into 3rdparty/out/<system>/video-codecs, with THIRD-PARTY-<system>.txt. Run by hand, only when a version changes:
+# into 3rdparty/out/<system>/codecs, with THIRD-PARTY-<system>.txt. Run by hand, only when a version changes:
 # build-release.sh takes out/ as it is, so the files keep their md5 and the updater does not fetch them again.
 #
 #   bash 3rdparty/build.sh [macos] [linux] [windows] [android]     none named: the three desktops
@@ -8,7 +8,9 @@
 #   macos    built here (libmpv-macos.sh), every dependency inside; bundle-macos.py names and signs it
 #   linux    built in Docker on Debian 12 (libmpv-linux/), whose glibc is older than any supported distribution's
 #   windows  the prebuilt LGPL libmpv-2.dll of zhongfly/mpv-winbuild: IC_LIBMPV_DLL, or cache/libmpv-windows/libmpv-2.dll
-#   android  arm64, built here with the NDK (libmpv-android.sh); the font stack is the one the app's APK ships
+#   android  arm64, built here with the NDK (libmpv-android.sh); the font stack is the one the app's APK ships, the
+#            release app/gtk-stack.lock pins (GTK_STACK or GTK_ROOT for a checkout); meson and ninja from the system
+#            or from GTK_STACK's bin/tools/venv
 #
 # Sources and builds are kept in 3rdparty/cache and reused; REBUILD=1 compiles again.
 set -e
@@ -19,7 +21,7 @@ platforms="${*:-macos linux windows}"
 
 for platform in $platforms; do
     echo "=== $platform ==="
-    OUT="$HERE/out/$platform/video-codecs"
+    OUT="$HERE/out/$platform/codecs"
     NOTES="$CACHE/$platform.notes"
     rm -rf "$OUT" "$NOTES" "$NOTES.texts"
     mkdir -p "$OUT" "$CACHE"
@@ -101,5 +103,5 @@ for platform in $platforms; do
         fi
     } > "$OUT/THIRD-PARTY-$platform.txt"
     rm -f "$NOTES" "$NOTES.texts"
-    echo "  3rdparty/out/$platform/video-codecs: $(find "$OUT" -type f | wc -l | tr -d ' ') file(s), $(du -sh "$OUT" | cut -f1)"
+    echo "  3rdparty/out/$platform/codecs: $(find "$OUT" -type f | wc -l | tr -d ' ') file(s), $(du -sh "$OUT" | cut -f1)"
 done

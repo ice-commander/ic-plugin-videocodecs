@@ -1,8 +1,8 @@
 [package]
-name = "ic-video-view"
+name = "ic-codecs"
 version = "0.0.0"
 edition = "2021"
-description = "Plays video"
+description = "Plays video and sound"
 license = "MIT OR Apache-2.0"
 publish = false
 

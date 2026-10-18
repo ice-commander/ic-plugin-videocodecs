@@ -32,11 +32,11 @@ if [ -f bin/.deployed ]; then
 fi
 
 # Not beside the plugins: the host would try to load any library there as a plugin.
-if [ -d bin/video-codecs ]; then
-    rm -rf "$TARGET/video-codecs"
-    mkdir -p "$TARGET/video-codecs"
-    cp -a bin/video-codecs/. "$TARGET/video-codecs/"
-    printf '%s\n' "  video-codecs -> $TARGET/video-codecs"
+if [ -d bin/codecs ]; then
+    rm -rf "$TARGET/codecs"
+    mkdir -p "$TARGET/codecs"
+    cp -a bin/codecs/. "$TARGET/codecs/"
+    printf '%s\n' "  codecs -> $TARGET/codecs"
 fi
 
 : > bin/.deployed

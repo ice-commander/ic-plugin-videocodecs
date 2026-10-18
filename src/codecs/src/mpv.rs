@@ -1,4 +1,3 @@
-//! Opened at run time, not linked: the web host loads the plugin without libmpv, and a carried copy comes first.
 
 use std::ffi::CString;
 use std::os::raw::{c_char, c_double, c_int, c_void};
@@ -37,7 +36,6 @@ struct Fbo {
     internal_format: c_int,
 }
 
-/// Called from whichever thread decoded, which is never the one that draws.
 pub type Wake = extern "C" fn(*mut c_void);
 
 struct Api {
@@ -96,7 +94,13 @@ fn candidates() -> Vec<String> {
     }
     if let Some(beside) = own_folder() {
         for name in NAMES {
-            found.push(beside.join(CODECS).join(name).to_string_lossy().into_owned());
+            found.push(
+                beside
+                    .join(CODECS)
+                    .join(name)
+                    .to_string_lossy()
+                    .into_owned(),
+            );
             found.push(beside.join(name).to_string_lossy().into_owned());
         }
     }
@@ -104,15 +108,14 @@ fn candidates() -> Vec<String> {
     found
 }
 
-/// A subfolder because the host tries every library in the plugin folder as a plugin.
-pub const CODECS: &str = "video-codecs";
-
-/// Inside CODECS: what libmpv links on Linux that a desktop may lack.
-#[cfg(target_os = "linux")]
-const FALLBACK: &str = "fallback";
+pub const CODECS: &str = "codecs";
 
 /// Each of these is loaded only where the system has none of its own: a system copy matches the system's
 /// drivers, which matters for libva. Rounds, because one may need another that is not loaded yet.
+#[cfg(target_os = "linux")]
+const FALLBACK: &str = "fallback";
+
+    /// Global, so a library loaded later that names this one by soname is linked to it rather than searching.
 #[cfg(target_os = "linux")]
 fn fall_back(folder: &std::path::Path) {
     let Ok(entries) = std::fs::read_dir(folder) else {
@@ -173,18 +176,11 @@ pub struct Player {
     handle: Handle,
     render: Context,
     refused: Vec<String>,
-    /// Handed to the update callback; freed only after the render context that holds it.
     ticket: *mut u64,
 }
 
 impl Player {
-    /// Needs the canvas GL context current; options go before `initialize`, after which `vo` is read-only.
-    pub fn new(
-        get_proc_address: extern "C" fn(*mut c_void, *const c_char) -> *mut c_void,
-        proc_ctx: *mut c_void,
-        wake: Wake,
-        instance: u64,
-    ) -> Result<Player, String> {
+    fn made(instance: u64, extra: &[(&str, &str)]) -> Result<Player, String> {
         let api = api().ok_or("no libmpv on this machine")?;
         // mpv requires LC_NUMERIC=C; a comma-decimal desktop locale breaks it.
         plain_numbers();
@@ -208,9 +204,31 @@ impl Player {
                 player.refused.push(name.to_string());
             }
         }
+        for (name, value) in extra {
+            if !player.option(name, value) {
+                player.refused.push((*name).to_string());
+            }
+        }
         if (api.initialize)(handle) < 0 {
             return Err("mpv_initialize refused".to_string());
         }
+        Ok(player)
+    }
+
+    pub fn for_sound() -> Result<Player, String> {
+        Player::made(0, &[("vid", "no"), ("vo", "null")])
+    }
+
+    /// Needs the canvas GL context current; options go before `initialize`, after which `vo` is read-only.
+    pub fn new(
+        get_proc_address: extern "C" fn(*mut c_void, *const c_char) -> *mut c_void,
+        proc_ctx: *mut c_void,
+        wake: Wake,
+        instance: u64,
+    ) -> Result<Player, String> {
+        let api = api().ok_or("no libmpv on this machine")?;
+        let mut player = Player::made(instance, &[])?;
+        let handle = player.handle;
 
         let mut kind = *b"opengl\0";
         let mut init = GlInit {
@@ -241,7 +259,8 @@ impl Player {
     }
 
     fn option(&self, name: &str, value: &str) -> bool {
-        let (Ok(api), Ok(name), Ok(value)) = (api().ok_or(()), CString::new(name), CString::new(value))
+        let (Ok(api), Ok(name), Ok(value)) =
+            (api().ok_or(()), CString::new(name), CString::new(value))
         else {
             return false;
         };
@@ -309,13 +328,21 @@ impl Player {
 
     pub fn number(&self, name: &str) -> Option<f64> {
         let mut held: c_double = 0.0;
-        self.read(name, FORMAT_DOUBLE, &mut held as *mut c_double as *mut c_void)
-            .then_some(held)
+        self.read(
+            name,
+            FORMAT_DOUBLE,
+            &mut held as *mut c_double as *mut c_void,
+        )
+        .then_some(held)
     }
 
     pub fn set_number(&self, name: &str, value: f64) {
         let mut held: c_double = value;
-        self.write(name, FORMAT_DOUBLE, &mut held as *mut c_double as *mut c_void);
+        self.write(
+            name,
+            FORMAT_DOUBLE,
+            &mut held as *mut c_double as *mut c_void,
+        );
     }
 
     fn read(&self, name: &str, format: c_int, into: *mut c_void) -> bool {
@@ -444,7 +471,6 @@ mod system {
         (!library.is_null()).then_some(library)
     }
 
-    /// Global, so a library loaded later that names this one by soname is linked to it rather than searching.
     #[cfg(target_os = "linux")]
     pub fn open_global(at: &str) -> bool {
         const RTLD_GLOBAL: c_int = 0x100;
@@ -483,7 +509,6 @@ mod system {
     const FROM_ADDRESS: u32 = 0x4;
     const UNCHANGED_REFCOUNT: u32 = 0x2;
 
-    /// Looks for the library's own dependencies in its folder rather than beside the application.
     const LOAD_WITH_ALTERED_SEARCH_PATH: u32 = 0x8;
 
     extern "system" {

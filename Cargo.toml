@@ -1,5 +1,5 @@
 [workspace]
-members = ["src/video-view"]
+members = ["src/codecs"]
 resolver = "2"
 
 [workspace.dependencies]

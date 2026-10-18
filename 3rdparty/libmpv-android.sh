@@ -9,8 +9,11 @@
 # has them at these tags, so nothing is fetched twice.
 #
 #   ANDROID_NDK_HOME   the NDK (default /opt/android-sdk/ndk/27.0.12077973)
-#   GTK_STACK          the android-rust-gtk4-adwaita checkout whose fonts libraries the APK ships (default: beside
-#                      ice-commander/); its bin/tools/venv has meson and ninja when the system has none
+#   GTK_ROOT           the GTK stack's installed tree whose fonts libraries the APK ships (default: root-aarch64 of
+#                      GTK_STACK, else of the release ice-commander/app/gtk-stack.lock pins, fetched into the cache
+#                      as for the app)
+#   GTK_STACK          an android-rust-gtk4-adwaita checkout, for work on the stack; its bin/tools/venv has meson
+#                      and ninja when the system has none (the release archive has no tools)
 set -e
 
 FFMPEG_VERSION=8.1.2
@@ -29,23 +32,33 @@ WORK="${LIBMPV_SOURCES:-$CACHE/libmpv-android-src}"
 LINUX_SOURCES="$CACHE/libmpv-linux-src"
 NDK="${ANDROID_NDK_HOME:-/opt/android-sdk/ndk/27.0.12077973}"
 TC="$NDK/toolchains/llvm/prebuilt/linux-x86_64"
-GTK_STACK="${GTK_STACK:-$(cd "$(dirname "$0")/../../../.." && pwd)/android-rust-gtk4-adwaita}"
-GTK_ROOT="$GTK_STACK/bin/gtk-stack/root-aarch64"
+if [ -n "${GTK_STACK:-}" ]; then
+    GTK_STACK="$(cd "$GTK_STACK" && pwd)"
+    GTK_ROOT="${GTK_ROOT:-$GTK_STACK/bin/gtk-stack/root-aarch64}"
+elif [ -z "${GTK_ROOT:-}" ]; then
+    IC_APP="$(cd "$(dirname "$0")/../../.." && pwd)/app"
+    GTK_ROOT="$("$IC_APP/src/gtk-app/android/fetch-gtk-stack.sh" --abi arm64-v8a "$IC_APP/gtk-stack.lock")"
+    GTK_ROOT="$GTK_ROOT/bin/gtk-stack/root-aarch64"
+fi
 JOBS="$(nproc)"
 
 [ -x "$TC/bin/$TRIPLE$API-clang" ] || { echo "no NDK clang at $TC — set ANDROID_NDK_HOME" >&2; exit 1; }
 [ -f "$GTK_ROOT/lib/arm64-v8a/pkgconfig/freetype2.pc" ] || {
-    echo "no GTK stack at $GTK_ROOT — build it, or set GTK_STACK" >&2
+    echo "no GTK stack at $GTK_ROOT — build it there, or set GTK_ROOT or GTK_STACK" >&2
     exit 1
 }
-if ! command -v meson >/dev/null && [ -x "$GTK_STACK/bin/tools/venv/bin/meson" ]; then
+GTK_ROOT="$(cd "$GTK_ROOT" && pwd)"
+if ! command -v meson >/dev/null && [ -n "${GTK_STACK:-}" ] && [ -x "$GTK_STACK/bin/tools/venv/bin/meson" ]; then
     export PATH="$GTK_STACK/bin/tools/venv/bin:$PATH"
 fi
 missing=""
 for tool in meson ninja pkg-config python3 git curl make; do
     command -v "$tool" >/dev/null || missing="$missing $tool"
 done
-[ -z "$missing" ] || { echo "missing:$missing" >&2; exit 1; }
+[ -z "$missing" ] || {
+    echo "missing:$missing (meson and ninja: install them, or set GTK_STACK to a checkout with bin/tools/venv)" >&2
+    exit 1
+}
 
 mkdir -p "$WORK"
 rm -rf "$PREFIX"

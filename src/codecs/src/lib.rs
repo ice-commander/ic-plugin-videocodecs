@@ -3,9 +3,9 @@
 mod mpv;
 
 use ic_plugin_api::{
-    check_host, needs_canvas, HostCheck, IcBytes, IcCanvas, IcFrame, IcFsSource, IcHost,
-    IcViewVTable, IcViewerVTable, IC_ABI_VERSION, IC_CANVAS_GL, IC_ERR_HOST_TOO_OLD,
-    IC_ERR_HOST_UNKNOWN, IC_ERR_INIT_FAILED, IC_ERR_IO, IC_ERR_NOT_THIS_HOST, IC_HOST_GTK, IC_OK,
+    check_host, draws_with_gtk, needs_canvas, HostCheck, IcBytes, IcCanvas, IcFrame, IcFsSource,
+    IcHost, IcViewVTable, IcViewerVTable, IC_ABI_VERSION, IC_CANVAS_GL, IC_ERR_HOST_TOO_OLD,
+    IC_ERR_HOST_UNKNOWN, IC_ERR_INIT_FAILED, IC_ERR_IO, IC_ERR_NOT_THIS_HOST, IC_OK,
 };
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -16,13 +16,13 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 include!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../version.rs"));
 
 ic_plugin_api::declare_about!(
-    "ic-video-view",
-    "Video",
+    "ic-codecs",
+    "Codecs",
     plugin_version!(),
-    "Plays video, with the codecs it needs"
+    "Plays video and sound, with the codecs they need"
 );
 
-pub const ID: &str = "video-view";
+pub const ID: &str = "codecs-video";
 pub const EXTENSIONS: &str =
     ".mp4,.mkv,.avi,.mov,.webm,.m4v,.wmv,.flv,.ts,.m2ts,.mts,.mpg,.mpeg,.3gp,.ogv";
 
@@ -101,12 +101,118 @@ fn local_path(source: IcFsSource, named: &str) -> Option<String> {
     })
 }
 
+pub const SOUND: &str = ".mp3,.flac,.ogg,.oga,.opus,.wav,.m4a,.aac,.wma,.aiff,.alac,.ape,.wv,.mka";
+
+pub const SOUND_ID: &str = "codecs-sound";
+
+const BETTER_THAN_THE_DEFAULT: i32 = 100;
+
+thread_local! {
+    static SOUNDING: RefCell<Option<mpv::Player>> = const { RefCell::new(None) };
+}
+
+extern "C" fn player_open(source: IcFsSource, path: *const c_char, _user: *mut c_void) -> c_int {
+    if path.is_null() {
+        return IC_ERR_INIT_FAILED;
+    }
+    let named = unsafe { CStr::from_ptr(path) }
+        .to_string_lossy()
+        .into_owned();
+    let Some(local) = local_path(source, &named) else {
+        return IC_ERR_IO;
+    };
+    let started = mpv::Player::for_sound().and_then(|player| {
+        player.play(&local)?;
+        Ok(player)
+    });
+    match started {
+        Ok(player) => {
+            SOUNDING.with(|held| *held.borrow_mut() = Some(player));
+            IC_OK
+        }
+        Err(why) => {
+            warn(&format!("video: cannot play {named}: {why}"));
+            IC_ERR_IO
+        }
+    }
+}
+
+extern "C" fn player_where(_user: *mut c_void) -> ic_plugin_api::IcPlayedSoFar {
+    SOUNDING.with(|held| {
+        let held = held.borrow();
+        let Some(player) = held.as_ref() else {
+            return ic_plugin_api::IcPlayedSoFar {
+                at: 0.0,
+                of: 0.0,
+                paused: 0,
+                ended: 0,
+            };
+        };
+        ic_plugin_api::IcPlayedSoFar {
+            at: player.number("time-pos").unwrap_or(0.0),
+            of: player.number("duration").unwrap_or(0.0),
+            paused: c_int::from(player.flag("pause").unwrap_or(false)),
+            ended: c_int::from(player.flag("eof-reached").unwrap_or(false)),
+        }
+    })
+}
+
+extern "C" fn player_pause(paused: c_int, _user: *mut c_void) -> c_int {
+    SOUNDING.with(|held| match held.borrow().as_ref() {
+        Some(player) => {
+            player.set_flag("pause", paused != 0);
+            IC_OK
+        }
+        None => IC_ERR_IO,
+    })
+}
+
+extern "C" fn player_seek(to: f64, _user: *mut c_void) -> c_int {
+    SOUNDING.with(|held| match held.borrow().as_ref() {
+        Some(player) => {
+            player.set_number("time-pos", to.max(0.0));
+            IC_OK
+        }
+        None => IC_ERR_IO,
+    })
+}
+
+extern "C" fn player_volume(volume: f64, _user: *mut c_void) -> c_int {
+    SOUNDING.with(|held| match held.borrow().as_ref() {
+        Some(player) => {
+            player.set_number("volume", (volume.clamp(0.0, 1.0)) * 100.0);
+            IC_OK
+        }
+        None => IC_ERR_IO,
+    })
+}
+
+extern "C" fn player_stop(_user: *mut c_void) {
+    SOUNDING.with(|held| *held.borrow_mut() = None);
+}
+
+fn player_vtable() -> ic_plugin_api::IcPlayerVTable {
+    ic_plugin_api::IcPlayerVTable {
+        struct_size: std::mem::size_of::<ic_plugin_api::IcPlayerVTable>() as u32,
+        open: player_open,
+        played_so_far: player_where,
+        pause: player_pause,
+        stop: player_stop,
+        seek: Some(player_seek),
+        volume: Some(player_volume),
+    }
+}
+
 extern "C" fn viewer_closed(instance: u64, _user_data: *mut c_void) {
     // The player is dropped in canvas_gone, while its GL context is still current.
     SHOWING.with(|held| held.borrow_mut().remove(&instance));
 }
 
-extern "C" fn canvas_ready(instance: u64, canvas: *const IcCanvas, _user_data: *mut c_void) -> c_int {
+extern "C" fn canvas_ready(
+    instance: u64,
+    canvas: *const IcCanvas,
+    _user_data: *mut c_void,
+) -> c_int {
     if canvas.is_null() {
         return IC_ERR_INIT_FAILED;
     }
@@ -518,14 +624,16 @@ fn frontend(kind: *const c_char) -> String {
     if kind.is_null() {
         return String::new();
     }
-    unsafe { CStr::from_ptr(kind) }.to_string_lossy().into_owned()
+    unsafe { CStr::from_ptr(kind) }
+        .to_string_lossy()
+        .into_owned()
 }
 
 #[cfg_attr(feature = "export-abi", no_mangle)]
 pub extern "C" fn ic_plugin_init(host: *const IcHost, kind: *const c_char) -> c_int {
     let kind = frontend(kind);
-    let draws = kind == IC_HOST_GTK;
-    if kind != IC_HOST_GTK && kind != ic_plugin_api::IC_HOST_WEB {
+    let draws = draws_with_gtk(&kind);
+    if !draws && kind != ic_plugin_api::IC_HOST_WEB {
         return IC_ERR_NOT_THIS_HOST;
     }
     match check_host(host, IC_ABI_VERSION, needs_canvas()) {
@@ -556,6 +664,22 @@ pub extern "C" fn ic_plugin_init(host: *const IcHost, kind: *const c_char) -> c_
             )
         };
     }
+    if mpv::found() && ic_plugin_api::host_has(host, ic_plugin_api::needs_player()) {
+        let (Ok(player_id), Ok(sound)) = (CString::new(SOUND_ID), CString::new(SOUND)) else {
+            return IC_ERR_INIT_FAILED;
+        };
+        let player = player_vtable();
+        unsafe {
+            ((*host).register_player)(
+                player_id.as_ptr(),
+                sound.as_ptr(),
+                BETTER_THAN_THE_DEFAULT,
+                &player,
+                std::ptr::null_mut(),
+            )
+        };
+    }
+
     let window = view_vtable();
     let viewer = viewer_vtable(&window, draws);
     unsafe {
@@ -572,6 +696,7 @@ pub extern "C" fn ic_plugin_init(host: *const IcHost, kind: *const c_char) -> c_
 #[cfg_attr(feature = "export-abi", no_mangle)]
 pub extern "C" fn ic_plugin_shutdown() {
     SHOWING.with(|held| held.borrow_mut().clear());
+    SOUNDING.with(|held| *held.borrow_mut() = None);
 }
 
 #[cfg(test)]
@@ -591,17 +716,33 @@ mod tests {
     #[test]
     fn the_shape_of_the_window_never_changes_while_the_film_does() {
         let start = parsed(&drawn_document(
-            Where { at: 0.0, of: 300.0, paused: false, volume: 80.0 },
+            Where {
+                at: 0.0,
+                of: 300.0,
+                paused: false,
+                volume: 80.0,
+            },
             false,
         ));
         let later = parsed(&drawn_document(
-            Where { at: 41.0, of: 300.0, paused: true, volume: 35.0 },
+            Where {
+                at: 41.0,
+                of: 300.0,
+                paused: true,
+                volume: 35.0,
+            },
             false,
         ));
         let broken = parsed(&drawn_document(Where::default(), true));
 
-        assert_eq!(start["form"], later["form"], "a film playing must not rebuild the window");
-        assert_eq!(start["form"], broken["form"], "nor must failing to play at all");
+        assert_eq!(
+            start["form"], later["form"],
+            "a film playing must not rebuild the window"
+        );
+        assert_eq!(
+            start["form"], broken["form"],
+            "nor must failing to play at all"
+        );
         assert_ne!(start["data"], later["data"], "only the data moves");
 
         assert_eq!(start["data"]["at"], 0.0);
@@ -615,7 +756,12 @@ mod tests {
     #[test]
     fn the_window_is_a_canvas_with_controls_under_it() {
         let drawn = parsed(&drawn_document(
-            Where { at: 10.0, of: 100.0, paused: false, volume: 80.0 },
+            Where {
+                at: 10.0,
+                of: 100.0,
+                paused: false,
+                volume: 80.0,
+            },
             false,
         ));
         assert_eq!(drawn["form"]["children"][0]["t"], "canvas");
@@ -624,21 +770,36 @@ mod tests {
         let controls = controls(&drawn);
         assert_eq!(controls[0]["id"], "play");
         assert_eq!(controls[0]["accel"], "space");
-        assert_eq!(controls[0]["role"], "flat", "a mark, not a button with a frame");
-        assert!(controls[0]["label"].is_null(), "it wears a picture, not a word");
+        assert_eq!(
+            controls[0]["role"], "flat",
+            "a mark, not a button with a frame"
+        );
+        assert!(
+            controls[0]["label"].is_null(),
+            "it wears a picture, not a word"
+        );
         assert_eq!(
             controls[0]["icon"]["cases"][0]["when"]["truthy"], "data.paused",
             "the mark is chosen by the data, which is what keeps the shape still"
         );
-        assert_eq!(controls[0]["icon"]["cases"][0]["then"]["literal"], format!("asset:{ID}/play"));
-        assert_eq!(controls[0]["icon"]["else"]["literal"], format!("asset:{ID}/pause"));
+        assert_eq!(
+            controls[0]["icon"]["cases"][0]["then"]["literal"],
+            format!("asset:{ID}/play")
+        );
+        assert_eq!(
+            controls[0]["icon"]["else"]["literal"],
+            format!("asset:{ID}/pause")
+        );
 
         let seek = &controls[1];
         assert_eq!(seek["t"], "slider");
         assert_eq!(seek["value_key"], "at");
         assert_eq!(seek["max"], SPAN);
         assert_eq!(seek["emit"], "change", "it is dragged, not committed");
-        assert_eq!(seek["weight"], 1, "the room going spare belongs to the film");
+        assert_eq!(
+            seek["weight"], 1,
+            "the room going spare belongs to the film"
+        );
 
         assert_eq!(controls[2]["t"], "table");
         assert_eq!(controls[2]["rows_key"], "clock");
@@ -647,7 +808,10 @@ mod tests {
         assert_eq!(volume["t"], "slider");
         assert_eq!(volume["value_key"], "volume");
         assert_eq!(volume["max"], 100.0);
-        assert_eq!(volume["width"], VOLUME_WIDTH, "and a fixed width is not the film's");
+        assert_eq!(
+            volume["width"], VOLUME_WIDTH,
+            "and a fixed width is not the film's"
+        );
         assert!(volume["weight"].is_null(), "so it must not expand");
     }
 
@@ -687,12 +851,30 @@ mod tests {
     fn the_slider_and_the_film_agree_both_ways() {
         let of = 637.0;
         for at in [0.0, 1.0, 318.5, 636.9, 637.0] {
-            let there = along(Where { at, of, ..Where::default() });
-            assert!((seconds_at(there, of) - at).abs() < 1.0, "{at}s came back as something else");
+            let there = along(Where {
+                at,
+                of,
+                ..Where::default()
+            });
+            assert!(
+                (seconds_at(there, of) - at).abs() < 1.0,
+                "{at}s came back as something else"
+            );
         }
-        assert_eq!(along(Where { at: 5.0, of: 0.0, ..Where::default() }), 0.0,
-                   "a film with no length sits at the start");
-        assert_eq!(seconds_at(SPAN * 2.0, 100.0), 100.0, "and never past the end");
+        assert_eq!(
+            along(Where {
+                at: 5.0,
+                of: 0.0,
+                ..Where::default()
+            }),
+            0.0,
+            "a film with no length sits at the start"
+        );
+        assert_eq!(
+            seconds_at(SPAN * 2.0, 100.0),
+            100.0,
+            "and never past the end"
+        );
         assert_eq!(seconds_at(-5.0, 100.0), 0.0);
     }
 
@@ -711,7 +893,11 @@ mod tests {
         assert_eq!(showing.holding(), Some(120.0));
 
         showing.dragged_to = Some((120.0, std::time::Instant::now() - A_DRAG_LASTS));
-        assert_eq!(showing.holding(), None, "and the film has it back afterwards");
+        assert_eq!(
+            showing.holding(),
+            None,
+            "and the film has it back afterwards"
+        );
     }
 
     #[test]
@@ -745,7 +931,62 @@ mod tests {
     fn a_terminal_has_nowhere_to_show_a_film() {
         let host = ic_plugin_api::testing::silent_host();
         let console = CString::new(ic_plugin_api::IC_HOST_CONSOLE).expect("a kind");
-        assert_eq!(ic_plugin_init(&host, console.as_ptr()), IC_ERR_NOT_THIS_HOST);
+        assert_eq!(
+            ic_plugin_init(&host, console.as_ptr()),
+            IC_ERR_NOT_THIS_HOST
+        );
+    }
+
+    #[test]
+    fn nothing_is_both_a_film_and_a_track() {
+        let films: Vec<&str> = EXTENSIONS.split(',').collect();
+        let tracks: Vec<&str> = SOUND.split(',').collect();
+        for track in &tracks {
+            assert!(
+                !films.contains(track),
+                "{track} is claimed as a film and as a track"
+            );
+        }
+        assert!(tracks.contains(&".mp3"), "the formats asked for are there");
+        assert!(tracks.contains(&".flac"));
+    }
+
+    #[test]
+    fn the_player_is_registered_under_its_own_name() {
+        assert_ne!(SOUND_ID, ID);
+    }
+
+    #[test]
+    fn the_player_offers_everything_it_can_do() {
+        let table = player_vtable();
+        assert_eq!(
+            table.struct_size as usize,
+            std::mem::size_of::<ic_plugin_api::IcPlayerVTable>()
+        );
+        assert!(table.seek.is_some(), "mpv can seek");
+        assert!(table.volume.is_some(), "and has a volume of its own");
+    }
+
+    #[test]
+    fn with_nothing_playing_the_player_says_so() {
+        SOUNDING.with(|held| *held.borrow_mut() = None);
+        let said = player_where(std::ptr::null_mut());
+        assert_eq!(said.at, 0.0);
+        assert_eq!(said.of, 0.0);
+        assert_eq!(said.ended, 0);
+        assert_ne!(player_pause(1, std::ptr::null_mut()), IC_OK);
+        assert_ne!(player_seek(5.0, std::ptr::null_mut()), IC_OK);
+        player_stop(std::ptr::null_mut());
+    }
+
+    #[test]
+    fn a_phone_draws_the_film_as_the_desktop_does() {
+        assert!(draws_with_gtk(ic_plugin_api::IC_HOST_ANDROID));
+        for drawing in [false, true] {
+            let window = view_vtable();
+            let viewer = viewer_vtable(&window, drawing);
+            assert_eq!(viewer.canvas_draw.is_some(), drawing);
+        }
     }
 
     #[test]

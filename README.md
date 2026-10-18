@@ -1,6 +1,6 @@
-# ic-videocodecs
+# ic-codecs
 
-Video playback for Ice Commander through libmpv.
+Video and sound playback for Ice Commander through libmpv.
 
 In the GTK frontend the plugin draws the picture itself: the host hands it an
 OpenGL canvas, and libmpv renders into that framebuffer. libmpv opens files by
@@ -9,6 +9,12 @@ a local copy to play from. In the web frontend the plugin sends a `media` node
 that names the file, and the page plays it with the browser's player; libmpv
 is not needed there.
 The terminal frontend is refused at load time.
+
+Sound is separate from all of that. The plugin registers as a player for the
+audio formats libmpv decodes, and the application — which keeps the playlist,
+the titles and the artwork — asks it to play rather than decoding through its
+own `rodio`. No canvas is involved, so this works in every frontend that has
+libmpv. A format the plugin does not claim still plays as it always did.
 
 ## What it plays
 
@@ -32,28 +38,28 @@ logged once the player starts.
 libmpv is opened at run time, not linked. The plugin looks for it in this order:
 
 1. the path in `IC_VIDEO_MPV`;
-2. `video-codecs/` beside the plugin, and the plugin's own folder;
+2. `codecs/` beside the plugin, and the plugin's own folder;
 3. the system loader's search path.
 
 The names it tries are `libmpv.2.dylib` and `libmpv.dylib` on macOS;
 `libmpv-2.dll`, `mpv-2.dll` and `libmpv.dll` on Windows; and `libmpv.so.2` and
 `libmpv.so` elsewhere. If the GTK frontend finds no libmpv, the plugin logs
-`video: no libmpv was found` and refuses to load, so another viewer can still
+`no libmpv was found` and refuses to load, so another viewer can still
 take the extensions.
 
 The application does not ship libmpv on any system; this plugin carries it in
-`video-codecs/`: one library, LGPL and decode-only — FFmpeg without
+`codecs/`: one library, LGPL and decode-only — FFmpeg without
 `--enable-gpl`, mpv with `-Dgpl=false` — with FFmpeg, dav1d, libplacebo, libass
 and Little CMS linked into it (on macOS FreeType, HarfBuzz and FriBidi too),
 exporting only mpv's API, and `THIRD-PARTY-<system>.txt` beside it. On Linux it
 takes what every desktop with GTK has from the system and plays through ALSA;
-`video-codecs/fallback/` holds libva, loaded only where the system has none.
+`codecs/fallback/` holds libva, loaded only where the system has none.
 
 ## Building
 
 ```sh
 bash 3rdparty/build.sh   # the codecs of all three systems into 3rdparty/out; by hand, when a version changes
-./build.sh               # the plugin, carrying this system's codecs into bin/video-codecs
+./build.sh               # the plugin, carrying this system's codecs into bin/codecs
 ./test.sh                # cargo test --workspace
 ./deploy-local.sh
 ./build-release.sh       # all three systems into distr/, with the codecs from 3rdparty/out as they are
@@ -88,7 +94,7 @@ files with the same md5, and the updater leaves them alone.
 - elsewhere: `${XDG_DATA_HOME:-~/.local/share}/ice-commander/plugins`
 
 `IC_PLUGIN_DIR` overrides the folder. When the build carried libraries, the
-script replaces `video-codecs/` there as a whole. That folder is separate
+script replaces `codecs/` there as a whole. That folder is separate
 because the host would try to load any library left directly among the plugins
 as a plugin. The script also removes libraries it deployed earlier that are no
 longer built, using the list in `bin/.deployed`. Afterwards, switch the plugin
@@ -104,7 +110,7 @@ on in Settings → Plugins and restart.
 ## Licence
 
 The code is MIT or Apache-2.0, at your option. The icons in
-`src/video-view/assets/` are Icons8 artwork; see
+`src/codecs/assets/` are Icons8 artwork; see
 [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md). The carried codecs keep their
 own licences, in `3rdparty/licenses/` and in `THIRD-PARTY-<system>.txt` beside them. Contributions are accepted
 under the [DCO](DCO); sign off with `git commit -s`.

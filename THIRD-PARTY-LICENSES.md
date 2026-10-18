@@ -4,7 +4,7 @@ This plugin is licensed under MIT OR Apache-2.0, except for the artwork below.
 
 ## Icons
 
-The SVG icons in `src/video-view/assets/` are from [Icons8](https://icons8.com), under a license
+The SVG icons in `src/codecs/assets/` are from [Icons8](https://icons8.com), under a license
 the author purchased. That license covers the releases published by this project — it
 is not granted to anyone else by the source being public.
 
